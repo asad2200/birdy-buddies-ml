@@ -1,0 +1,7 @@
+/test_videos
+/test_images
+/test_audios
+
+venv/
+__pycache__/
+.DS_Store

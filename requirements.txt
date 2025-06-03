@@ -1,0 +1,16 @@
+# Vision
+torch==2.3.0
+ultralytics>=8.2
+supervision
+opencv-python-headless
+matplotlib
+
+# Audio
+birdnetlib==0.18.0    # BirdNET library
+
+# AWS SDK
+boto3
+
+# Common
+numpy
+requests
