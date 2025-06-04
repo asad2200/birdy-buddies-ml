@@ -21,10 +21,12 @@ s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
 # Environment variables
-MODEL_BUCKET = os.environ.get('MODEL_BUCKET', 'your-model-bucket')
+MODEL_BUCKET = os.environ.get('MODEL_BUCKET', 'birdtag-media-storage-aj')
+THUMBNAIL_BUCKET = os.environ.get('THUMBNAIL_BUCKET', 'birdtag-media-storage-aj')
 MODEL_KEY = os.environ.get('MODEL_KEY', 'models/model.pt')
-DYNAMODB_TABLE = os.environ.get('DYNAMODB_TABLE', 'image-metadata')
-THUMBNAIL_BUCKET = os.environ.get('THUMBNAIL_BUCKET', 'your-thumbnail-bucket')
+
+METADATA_TABLE = os.environ.get('METADATA_TABLE', 'BirdTagMetadata-DDB')
+TAG_INDEX_TABLE = os.environ.get('TAG_INDEX_TABLE', 'BirdTagTagIndex')
 
 # Global variables for model caching
 cached_model = None
@@ -42,14 +44,19 @@ def lambda_handler(event, context):
                     bucket = record['s3']['bucket']['name']
                     key = urllib.parse.unquote_plus(record['s3']['object']['key'])
                     
+                    # Extract user_sub from event or set default
+                    # You may need to modify this based on how you pass user_sub
+                    user_sub = event.get('user_sub', 'default_user')
+                    
                     # Process the media file
-                    process_media_file(bucket, key)
+                    process_media_file(bucket, key, user_sub)
         
         # Handle direct invocation
         elif 'bucket' in event and 'key' in event:
             bucket = event['bucket']
             key = event['key']
-            process_media_file(bucket, key)
+            user_sub = event.get('user_sub', 'default_user')
+            process_media_file(bucket, key, user_sub)
         
         else:
             raise ValueError("Invalid event format. Expected S3 event or direct invocation with bucket/key.")
@@ -321,49 +328,61 @@ def video_prediction(video_path: str, confidence: float = 0.5, sample_frames: in
         logger.error(f"Error in video prediction: {str(e)}")
         return []
 
-
-def save_to_database(image_url: str, thumbnail_url: str, tags: List[str], metadata: Dict[str, Any]):
-    """Save prediction results to DynamoDB"""
+def save_to_database(file_url: str, thumbnail_url: str, tags: List[Dict[str, int]], 
+                    user_sub: str, main_file_sk: str, file_type: str, iso_timestamp: str):
+    """Save prediction results to DynamoDB with metadata and tag index tables"""
     try:
-        table = dynamodb.Table(DYNAMODB_TABLE)
+        # Get table references
+        metadata_table = dynamodb.Table(METADATA_TABLE)
+        tag_index_table = dynamodb.Table(TAG_INDEX_TABLE)
         
-        # Create item for DynamoDB
-        item = {
-            'image_id': metadata.get('image_id', ''),
-            'media_url': image_url,
-            'thumbnail_url': thumbnail_url,
-            'tags': tags,
-            'media_type': metadata.get('media_type', 'image'),
-            'created_at': datetime.utcnow().isoformat(),
-            'file_size': metadata.get('file_size', 0),
-            'content_type': metadata.get('content_type', ''),
-            'processed_at': datetime.utcnow().isoformat(),
-            'bucket': metadata.get('bucket', ''),
-            'key': metadata.get('key', '')
+        # Convert tags from List[Dict[str, int]] to Dict[str, int]
+        detected_tags = {}
+        for tag_dict in tags:
+            detected_tags.update(tag_dict)
+        
+        # --- Write the main metadata record into BirdTagMetadata-DDB ---
+        metadata_item = {
+            "PK": f"USER#{user_sub}",
+            "SK": main_file_sk,
+            "fileURL": file_url,
+            "thumbURL": thumbnail_url,
+            "fileType": file_type,
+            "uploadedAt": iso_timestamp,
+            "tags": detected_tags  # e.g. { "crow": 2, "pigeon": 1 }
         }
         
-        # Add additional metadata if available
-        if 'width' in metadata:
-            item['width'] = metadata['width']
-        if 'height' in metadata:
-            item['height'] = metadata['height']
-        if 'duration' in metadata:
-            item['duration'] = metadata['duration']
-            
-        response = table.put_item(Item=item)
-        logger.info(f"Successfully saved to DynamoDB: {item['image_id']}")
+        metadata_table.put_item(Item=metadata_item)
+        logger.info(f"Successfully saved metadata to DynamoDB: {main_file_sk}")
         
-        return response
+        # --- Write one inverted-index item per detected species into BirdTagTagIndex ---
+        if detected_tags:
+            with tag_index_table.batch_writer() as batch:
+                for species, count in detected_tags.items():
+                    tag_index_item = {
+                        "PK": f"TAG#{species}",  # e.g. "TAG#crow"
+                        "SK": main_file_sk,      # Matches metadata SK
+                        "fileURL": file_url,     # Store the original S3 URL
+                        "thumbURL": thumbnail_url,  # Store the thumbnail URL
+                        "tagCount": count,       # Numeric count of that species
+                        "uploadedAt": iso_timestamp,  # Record when inference ran
+                        "userPK": f"USER#{user_sub}"  # Same PK as metadata
+                    }
+                    batch.put_item(Item=tag_index_item)
+            
+            logger.info(f"Successfully saved {len(detected_tags)} tag index items to DynamoDB")
         
     except Exception as e:
         logger.error(f"Error saving to DynamoDB: {str(e)}")
         raise
 
-def process_media_file(bucket: str, key: str):
+def process_media_file(bucket: str, key: str, user_sub: str):
     """Process a single media file (image, video, or audio)"""
     try:
-        # Generate unique ID
-        media_id = f"{bucket}_{key.replace('/', '_')}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        # Generate unique SK for this file
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        main_file_sk = f"FILE#{timestamp}#{key.replace('/', '_')}"
+        iso_timestamp = datetime.utcnow().isoformat()
         
         # Download media file
         media_path = download_media_file(bucket, key)
@@ -384,26 +403,13 @@ def process_media_file(bucket: str, key: str):
                 tags = []
             
             # Generate URLs
-            media_url = f"s3://{bucket}/{key}"
+            file_url = f"s3://{bucket}/{key}"
             thumbnail_url = generate_thumbnail_url(bucket, key)
             
-            # Get file metadata
-            response = s3_client.head_object(Bucket=bucket, Key=key)
-            
-            # Prepare metadata
-            metadata = {
-                'image_id': media_id,
-                'media_type': file_type,
-                'file_size': response.get('ContentLength', 0),
-                'content_type': response.get('ContentType', ''),
-                'bucket': bucket,
-                'key': key
-            }
-            
             # Save to database
-            save_to_database(media_url, thumbnail_url, tags, metadata)
+            save_to_database(file_url, thumbnail_url, tags, user_sub, main_file_sk, file_type, iso_timestamp)
             
-            logger.info(f"Successfully processed {file_type}: {media_id} with {len(tags)} tags")
+            logger.info(f"Successfully processed {file_type}: {main_file_sk} with {len(tags)} tag types")
             
         finally:
             # Clean up temporary file
@@ -418,6 +424,6 @@ def generate_thumbnail_url(bucket: str, key: str) -> str:
     """Generate thumbnail URL based on original media path"""
     file_name = os.path.splitext(os.path.basename(key))[0]
     file_ext = os.path.splitext(key)[1]
-    thumbnail_key = f"thumbnails/thumb_{file_name}{file_ext}"
+    thumbnail_key = f"thumbnails/{file_name}-thumb{file_ext}"
     
     return f"s3://{THUMBNAIL_BUCKET}/{thumbnail_key}"

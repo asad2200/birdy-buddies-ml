@@ -6,7 +6,9 @@ opencv-python-headless
 matplotlib
 
 # Audio
+birdnet-analyzer>=2.0
 birdnetlib==0.18.0    # BirdNET library
+soundfile
 
 # AWS SDK
 boto3
