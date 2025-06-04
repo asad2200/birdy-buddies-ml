@@ -37,6 +37,8 @@ model_last_modified = None
 def lambda_handler(event, context):
     """Main Lambda handler function for processing images, videos, and audio files"""
     try:
+        results = []
+
         logger.info(f"Received event: {json.dumps(event)}")
         
         # Handle S3 event trigger
@@ -51,23 +53,23 @@ def lambda_handler(event, context):
                     user_sub = event.get('user_sub', 'default_user')
                     
                     # Process the media file
-                    process_media_file(bucket, key, user_sub)
+                    res = process_media_file(bucket, key, user_sub)
+                    results.append(res)
         
         # Handle direct invocation
         elif 'bucket' in event and 'key' in event:
             bucket = event['bucket']
             key = event['key']
             user_sub = event.get('user_sub', 'default_user')
-            process_media_file(bucket, key, user_sub)
+            res = process_media_file(bucket, key, user_sub)
+            results.append(res)
         
         else:
             raise ValueError("Invalid event format. Expected S3 event or direct invocation with bucket/key.")
         
         return {
             'statusCode': 200,
-            'body': json.dumps({
-                'message': 'Media processing completed successfully'
-            })
+            'body': json.dumps({"results": results})
         }
         
     except Exception as e:
@@ -415,6 +417,12 @@ def process_media_file(bucket: str, key: str, user_sub: str):
             save_to_database(file_url, thumbnail_url, tags, user_sub, main_file_sk, file_type, iso_timestamp)
             
             logger.info(f"Successfully processed {file_type}: {main_file_sk} with {len(tags)} tag types")
+
+            return {
+                "fileURL": file_url,
+                "thumbnailURL": thumbnail_url,
+                "tags": tags
+            }
             
         finally:
             # Clean up temporary file
