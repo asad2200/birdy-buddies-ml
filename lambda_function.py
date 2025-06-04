@@ -21,6 +21,8 @@ s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
 # Environment variables
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+
 MODEL_BUCKET = os.environ.get('MODEL_BUCKET', 'birdtag-media-storage-aj')
 THUMBNAIL_BUCKET = os.environ.get('THUMBNAIL_BUCKET', 'birdtag-media-storage-aj')
 MODEL_KEY = os.environ.get('MODEL_KEY', 'models/model.pt')
@@ -97,8 +99,6 @@ def should_reload_model() -> bool:
         return True  # Force reload on error
 
 def load_model_from_s3():
-    return YOLO('./model.pt') #TODO: remove this
-
     """Download and load YOLO model from S3"""
     global cached_model, model_last_modified
     
@@ -403,8 +403,13 @@ def process_media_file(bucket: str, key: str, user_sub: str):
                 tags = []
             
             # Generate URLs
-            file_url = f"s3://{bucket}/{key}"
-            thumbnail_url = generate_thumbnail_url(bucket, key)
+            file_url = build_http_url(bucket, key)
+            
+            if file_type == 'image':
+                thumbnail_key = generate_thumbnail_key(key)
+                thumbnail_url = build_http_url(THUMBNAIL_BUCKET, thumbnail_key)
+            else:
+                thumbnail_url = None
             
             # Save to database
             save_to_database(file_url, thumbnail_url, tags, user_sub, main_file_sk, file_type, iso_timestamp)
@@ -420,10 +425,15 @@ def process_media_file(bucket: str, key: str, user_sub: str):
         logger.error(f"Error processing media file {bucket}/{key}: {str(e)}")
         raise
 
-def generate_thumbnail_url(bucket: str, key: str) -> str:
-    """Generate thumbnail URL based on original media path"""
-    file_name = os.path.splitext(os.path.basename(key))[0]
-    file_ext = os.path.splitext(key)[1]
-    thumbnail_key = f"thumbnails/{file_name}-thumb{file_ext}"
-    
-    return f"s3://{THUMBNAIL_BUCKET}/{thumbnail_key}"
+def build_http_url(bucket: str, key: str) -> str:
+    """
+    Return an HTTPS, virtual-hosted–style URL:
+    https://<bucket>.s3.<region>.amazonaws.com/<key>
+    """
+    quoted_key = urllib.parse.quote(key, safe="/")  # preserve the '/'s
+    return f"https://{bucket}.s3.{AWS_REGION}.amazonaws.com/{quoted_key}"
+
+def generate_thumbnail_key(key: str) -> str:
+    """Return the S3 *key* where the thumbnail will live."""
+    file_name, file_ext = os.path.splitext(os.path.basename(key))
+    return f"thumbnails/{file_name}-thumb{file_ext}"
