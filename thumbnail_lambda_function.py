@@ -29,12 +29,15 @@ def lambda_handler(event, context):
         if not is_image_file(key):
             print(f"File {key} is not an image. Skipping thumbnail generation.")
 
-            # Pass original event
-            invoke_next_lambda(event)
+            # Pass original event and get response
+            next_lambda_response = invoke_next_lambda(event)
 
             return {
                 'statusCode': 200,
-                'body': json.dumps(f'File {key} is not an image. No thumbnail created.')
+                'body': json.dumps({
+                    'message': f'File {key} is not an image. No thumbnail created.',
+                    'bird_detection_response': next_lambda_response
+                })
             }
         
         # Download the image from S3
@@ -61,15 +64,16 @@ def lambda_handler(event, context):
         
         print(f"Thumbnail created successfully: {thumbnail_key}")
 
-        # Pass original event
-        invoke_next_lambda(event)
+        # Pass original event and get response
+        next_lambda_response = invoke_next_lambda(event)
         
         return {
             'statusCode': 200,
             'body': json.dumps({
                 'message': 'Thumbnail created successfully',
                 'original_file': key,
-                'thumbnail_file': thumbnail_key
+                'thumbnail_file': thumbnail_key,
+                'bird_detection_response': next_lambda_response
             })
         }
         
@@ -134,14 +138,22 @@ def generate_thumbnail_key(original_key):
 
 def invoke_next_lambda(original_event: dict):
     """
-    Pass the original S3 event to bird detection Lambda
+    Pass the original S3 event to bird detection Lambda and return its response
     """
     try:
-        lambda_client.invoke(
+        response = lambda_client.invoke(
             FunctionName=BIRD_LAMBDA_ARN,
-            InvocationType="Event",
+            InvocationType="RequestResponse",  # Synchronous invocation
             Payload=json.dumps(original_event).encode(),
         )
-        print("Queued bird-detection Lambda successfully")
+        
+        # Parse the response
+        payload = response['Payload'].read()
+        response_data = json.loads(payload.decode('utf-8'))
+        
+        print("Successfully invoked bird-detection Lambda")
+        return response_data
+        
     except Exception as exc:
         print(f"Could not invoke bird-detection Lambda: {exc}")
+        return None
