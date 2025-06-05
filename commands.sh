@@ -20,6 +20,7 @@ docker tag birdtag-ml-dependencies:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.am
 # Push to ECR
 docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/birdtag-ml-dependencies:latest
 
+--------------------------------
 
 docker build -t birtag-inference:latest .
 

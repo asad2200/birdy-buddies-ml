@@ -331,7 +331,7 @@ def video_prediction(video_path: str, confidence: float = 0.5, sample_frames: in
         return []
 
 def save_to_database(file_url: str, thumbnail_url: str, tags: List[Dict[str, int]], 
-                    user_sub: str, main_file_sk: str, file_type: str, iso_timestamp: str):
+                    user_sub: str, main_file_sk: str, file_type: str, iso_timestamp: str, thumbnail_key: str = None):
     """Save prediction results to DynamoDB with metadata and tag index tables"""
     try:
         # Get table references
@@ -353,6 +353,11 @@ def save_to_database(file_url: str, thumbnail_url: str, tags: List[Dict[str, int
             "uploadedAt": iso_timestamp,
             "tags": detected_tags  # e.g. { "crow": 2, "pigeon": 1 }
         }
+        
+        # Add GSI2 fields if thumbnail exists
+        if thumbnail_key:
+            metadata_item["GSI2_PK"] = f"THUMB#{thumbnail_key}"
+            metadata_item["GSI2_SK"] = main_file_sk
         
         metadata_table.put_item(Item=metadata_item)
         logger.info(f"Successfully saved metadata to DynamoDB: {main_file_sk}")
@@ -411,10 +416,11 @@ def process_media_file(bucket: str, key: str, user_sub: str):
                 thumbnail_key = generate_thumbnail_key(key)
                 thumbnail_url = build_http_url(THUMBNAIL_BUCKET, thumbnail_key)
             else:
+                thumbnail_key = None
                 thumbnail_url = None
             
             # Save to database
-            save_to_database(file_url, thumbnail_url, tags, user_sub, main_file_sk, file_type, iso_timestamp)
+            save_to_database(file_url, thumbnail_url, tags, user_sub, main_file_sk, file_type, iso_timestamp, thumbnail_key)
             
             logger.info(f"Successfully processed {file_type}: {main_file_sk} with {len(tags)} tag types")
 
