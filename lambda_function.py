@@ -1,3 +1,5 @@
+import base64
+import mimetypes
 import json
 import boto3
 import os
@@ -63,6 +65,20 @@ def lambda_handler(event, context):
             user_sub = event.get('user_sub', 'default_user')
             res = process_media_file(bucket, key, user_sub)
             results.append(res)
+
+        # INLINE FILE from another Lambda / API-GW  ────────────────────
+        elif "fileB64" in event:
+            logger.info("Processing inline file from lambda-to-lambda invocation")
+            raw_bytes = base64.b64decode(event["fileB64"])
+            file_name = event.get("filename") or "upload.bin"
+            content_type = event.get("contentType")    # optional
+            ext = (
+                os.path.splitext(file_name)[1] or
+                mimetypes.guess_extension((content_type or "").split(";")[0]) or
+                ".bin"
+            )
+            tags = run_inference_on_bytes(raw_bytes, ext)
+            results.append({"tags": tags})
         
         else:
             raise ValueError("Invalid event format. Expected S3 event or direct invocation with bucket/key.")
@@ -329,6 +345,28 @@ def video_prediction(video_path: str, confidence: float = 0.5, sample_frames: in
     except Exception as e:
         logger.error(f"Error in video prediction: {str(e)}")
         return []
+
+def run_inference_on_bytes(file_bytes: bytes,
+                            file_ext: str = ".bin",
+                            confidence: float = 0.5):
+    """Write bytes to tmp file, detect type, run prediction, return tags list."""
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
+    try:
+        tmp.write(file_bytes); tmp.flush(); tmp.close()
+        ftype = get_file_type(tmp.name)
+
+        if ftype == "image":
+            tags = image_prediction(tmp.name, confidence)
+        elif ftype == "video":
+            tags = video_prediction(tmp.name, confidence)
+        elif ftype == "audio":
+            tags = audio_prediction(tmp.name, confidence)
+        else:
+            logger.warning(f"Unsupported inline file type: {ftype}")
+            tags = []
+        return tags
+    finally:
+        os.unlink(tmp.name)
 
 def save_to_database(file_url: str, thumbnail_url: str, tags: List[Dict[str, int]], 
                     user_sub: str, main_file_sk: str, file_type: str, iso_timestamp: str, thumbnail_key: str = None):
