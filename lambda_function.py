@@ -1,10 +1,29 @@
+import os
+import logging
+
+# CRITICAL: Set environment variables BEFORE importing librosa/numba
+# This must be done before any imports that use numba/librosa
+os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
+os.environ.setdefault("LIBROSA_CACHE_DIR", "/tmp/librosa_cache")
+os.environ.setdefault("NUMBA_THREADING_LAYER", "workqueue")
+os.environ.setdefault("NUMBA_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("PYTHONFAULTHANDLER", "1")
+os.environ["TFLITE_ENABLE_XNNPACK"] = "0"
+
+# CRITICAL: Disable multiprocessing that causes Lambda segfaults
+os.environ.setdefault("JOBLIB_MULTIPROCESSING", "0")
+os.environ.setdefault("JOBLIB_TEMP_FOLDER", "/tmp")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import base64
 import mimetypes
 import json
 import boto3
-import os
 import tempfile
-import logging
 from typing import Dict, List, Any
 from datetime import datetime
 import urllib.parse
@@ -261,6 +280,8 @@ def audio_prediction(audio_path: str, confidence: float = 0.5, min_conf: float =
         
         # Run prediction
         recording.analyze()
+
+        logger.info(f"Audio prediction finished: {recording.detections}")
         
         # Count species occurrences above confidence threshold
         species_counts = {}

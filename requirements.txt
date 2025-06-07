@@ -1,14 +1,22 @@
 # Vision
-torch==2.3.0
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.0+cpu
 ultralytics>=8.2
 supervision
 opencv-python-headless
 matplotlib
 
 # Audio
-birdnet-analyzer>=2.0
-birdnetlib==0.18.0    # BirdNET library
+# birdnet-analyzer>=2.0
+librosa==0.10.1
+numba==0.58.1
+resampy==0.4.3
+llvmlite==0.41.1
 soundfile
+birdnetlib==0.18.0    # BirdNET library
+
+# Use **full TensorFlow** (pulls the built-in TFLite interpreter)
+tensorflow-cpu==2.15.1 
 
 # AWS SDK
 boto3
