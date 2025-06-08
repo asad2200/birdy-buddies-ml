@@ -30,13 +30,12 @@ def lambda_handler(event, context):
             print(f"File {key} is not an image. Skipping thumbnail generation.")
 
             # Pass original event and get response
-            next_lambda_response = invoke_next_lambda(event)
+            invoke_next_lambda(event)
 
             return {
                 'statusCode': 200,
                 'body': json.dumps({
                     'message': f'File {key} is not an image. No thumbnail created.',
-                    'bird_detection_response': next_lambda_response
                 })
             }
         
@@ -65,7 +64,7 @@ def lambda_handler(event, context):
         print(f"Thumbnail created successfully: {thumbnail_key}")
 
         # Pass original event and get response
-        next_lambda_response = invoke_next_lambda(event)
+        invoke_next_lambda(event)
         
         return {
             'statusCode': 200,
@@ -73,7 +72,6 @@ def lambda_handler(event, context):
                 'message': 'Thumbnail created successfully',
                 'original_file': key,
                 'thumbnail_file': thumbnail_key,
-                'bird_detection_response': next_lambda_response
             })
         }
         
@@ -141,19 +139,13 @@ def invoke_next_lambda(original_event: dict):
     Pass the original S3 event to bird detection Lambda and return its response
     """
     try:
-        response = lambda_client.invoke(
+        lambda_client.invoke(
             FunctionName=BIRD_LAMBDA_ARN,
-            InvocationType="RequestResponse",  # Synchronous invocation
+            InvocationType="Event",  # Asynchronous invocation
             Payload=json.dumps(original_event).encode(),
         )
         
-        # Parse the response
-        payload = response['Payload'].read()
-        response_data = json.loads(payload.decode('utf-8'))
-        
-        print("Successfully invoked bird-detection Lambda")
-        return response_data
+        print("Successfully invoked bird-detection Lambda asynchronously")
         
     except Exception as exc:
         print(f"Could not invoke bird-detection Lambda: {exc}")
-        return None
