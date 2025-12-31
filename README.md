@@ -1,4 +1,4 @@
-# Monash Birdy Buddies
+# Birdy Buddies
 
 ## Setup Instructions
 
